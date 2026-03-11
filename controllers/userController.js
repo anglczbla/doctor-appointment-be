@@ -52,7 +52,7 @@ const loginUser = async (req, res) => {
     const user = await userModel.findOne({ email });
 
     if (!user) {
-      res.json({ success: false, message: "User does not exist" });
+      return res.json({ success: false, message: "User does not exist" });
     }
     const isMatch = await bcrypt.compare(password, user.password);
     if (isMatch) {
@@ -131,7 +131,7 @@ const updateProfile = async (req, res) => {
         const imageURL = imageUpload.secure_url;
 
         // Update image URL
-        const imageUpdatedUser = await userModel.findByIdAndUpdate(
+        await userModel.findByIdAndUpdate(
           userId,
           { image: imageURL },
           { new: true }
@@ -173,32 +173,35 @@ const bookAppointment = async (req, res) => {
     }
     const docData = await doctorModel.findById(docId).select("-password");
 
-    if (!docData.available) {
+    if (!docData || !docData.available) {
       return res.json({ success: false, message: "Doctor not available" });
     }
 
     let slots_booked = docData.slots_booked;
 
     // checking for slot availability
-    if (slots_booked[slotDate])
+    if (slots_booked[slotDate]) {
       if (slots_booked[slotDate].includes(slotTime)) {
         return res.json({ success: false, message: "Slot not available" });
       } else {
         slots_booked[slotDate].push(slotTime);
       }
-    else {
+    } else {
       slots_booked[slotDate] = [];
       slots_booked[slotDate].push(slotTime);
     }
 
     const userData = await userModel.findById(userId).select("-password");
-    delete docData.slots_booked;
+    
+    // Create copy for appointment without slots_booked
+    const docDataForAppointment = docData.toObject();
+    delete docDataForAppointment.slots_booked;
 
     const appointmentData = {
       userId,
       docId,
       slotDate,
-      docData,
+      docData: docDataForAppointment,
       userData,
       amount: docData.fee,
       slotTime,
@@ -237,8 +240,12 @@ const cancelAppointment = async (req, res) => {
     const { appointmentId } = req.body;
     const appointmentData = await appointmentModel.findById(appointmentId);
 
+    if (!appointmentData) {
+      return res.json({ success: false, message: "Appointment not found" });
+    }
+
     // verify appointment user
-    if (appointmentData.userId !== userId) {
+    if (appointmentData.userId.toString() !== userId.toString()) {
       return res.json({ success: false, message: "Unauthorized action" });
     }
 
@@ -250,12 +257,15 @@ const cancelAppointment = async (req, res) => {
     const { docId, slotDate, slotTime } = appointmentData;
     const doctorData = await doctorModel.findById(docId);
 
-    let slots_booked = doctorData.slots_booked;
-
-    slots_booked[slotDate] = slots_booked[slotDate].filter(
-      (e) => e !== slotTime
-    );
-    await doctorModel.findByIdAndUpdate(docId, { slots_booked });
+    if (doctorData) {
+      let slots_booked = doctorData.slots_booked;
+      if (slots_booked[slotDate]) {
+        slots_booked[slotDate] = slots_booked[slotDate].filter(
+          (e) => e !== slotTime
+        );
+        await doctorModel.findByIdAndUpdate(docId, { slots_booked });
+      }
+    }
 
     res.json({ success: true, message: "Appointment cancelled" });
   } catch (error) {
@@ -284,10 +294,10 @@ const paymentUser = async (req, res) => {
     }
 
     // Cek apakah appointment milik user ini
-    if (appointmentData.userId !== userId) {
+    if (appointmentData.userId.toString() !== userId.toString()) {
       return res.json({ success: false, message: "Unauthorized" });
     }
-
+// ... rest of method (unchanged)
     // Cek apakah sudah dibayar
     if (appointmentData.payment) {
       return res.json({ success: false, message: "Payment already submitted" });
